@@ -50,9 +50,9 @@ else {
 }
 
 if (-not $env:BROWSE_ROOT) {
-    if ($IsWindows) {
+    if ($env:OS -eq "Windows_NT") {
         $drive = (Split-Path $env:USERPROFILE -Qualifier)
-        $env:BROWSE_ROOT = "$drive\Users".Replace("\", "/")
+        $env:BROWSE_ROOT = "$drive/Users"
     } elseif ($IsMacOS) {
         $env:BROWSE_ROOT = "/Users"
     } else {
