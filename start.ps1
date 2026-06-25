@@ -4,12 +4,29 @@ param()
 $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot
 $ConfigPath = Join-Path $Root ".runtime\config.json"
-$VenvPython = Join-Path $Root ".venv\Scripts\python.exe"
+
+function Find-Python {
+    $candidates = @(
+        (Join-Path (Join-Path (Join-Path $Root ".venv") "Scripts") "python.exe"),
+        (Join-Path (Join-Path (Join-Path $Root ".venv") "bin") "python")
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+    foreach ($name in @("python", "python3")) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue
+        if ($command) {
+            return $command.Source
+        }
+    }
+    throw "Python tidak ditemukan."
+}
 
 if (-not (Test-Path $ConfigPath)) {
     Write-Host "Konfigurasi Scanner belum ada. Menjalankan setup..."
     & (Join-Path $Root "setup.ps1")
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 $config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
@@ -20,14 +37,7 @@ if ($config.storageBackend -eq "postgres" -and [string]::IsNullOrWhiteSpace($con
     throw "databaseUrl wajib diisi untuk backend PostgreSQL."
 }
 
-if (Test-Path $VenvPython) {
-    $Python = $VenvPython
-}
-else {
-    $PythonCommand = Get-Command python -ErrorAction SilentlyContinue
-    if (-not $PythonCommand) { throw "Python tidak ditemukan." }
-    $Python = $PythonCommand.Source
-}
+$Python = Find-Python
 
 $env:STORAGE_BACKEND = [string]$config.storageBackend
 $env:HOST = [string]$config.host
@@ -42,4 +52,3 @@ else {
 Write-Host "Menjalankan Scanner di http://$($config.host):$($config.port)"
 & $Python -u (Join-Path $Root "server.py")
 exit $LASTEXITCODE
-

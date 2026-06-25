@@ -1,0 +1,14 @@
+.git
+.gitignore
+.runtime
+.venv
+.env
+.env.*
+!.env.example
+!.env.docker.example
+data
+generated
+__pycache__
+*.pyc
+*.log
+

@@ -11,6 +11,9 @@ generated/
 .env.*
 !.env.example
 
+# Docker deployment secrets
+!.env.docker.example
+
 # Python cache and test artifacts
 __pycache__/
 *.pyc
