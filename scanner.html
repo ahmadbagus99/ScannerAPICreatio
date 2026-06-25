@@ -1,0 +1,154 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Creatio API Scanner</title>
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png?v=1" />
+    <link rel="shortcut icon" href="/favicon.ico?v=1" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" />
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+    <link rel="stylesheet" href="app.css?v=20260624-footer" />
+  </head>
+  <body class="scanner-page">
+    <nav class="navbar bg-white border-bottom sticky-top">
+      <div class="container-fluid px-3 px-lg-4">
+        <div class="navbar-brand py-2">
+          <span class="d-block fw-bold">Creatio API Scanner</span>
+          <small class="d-block text-secondary fw-normal">Scan custom packages and generate OpenAPI.</small>
+        </div>
+        <div class="d-flex gap-2">
+          <a class="btn btn-outline-secondary" href="/index.html">
+            <i class="bi bi-list-ul" aria-hidden="true"></i>
+            <span class="d-none d-sm-inline ms-1">Instances</span>
+          </a>
+          <a class="btn btn-outline-secondary" href="/settings.html" title="Settings">
+            <i class="bi bi-gear" aria-hidden="true"></i>
+            <span class="d-none d-sm-inline ms-1">Settings</span>
+          </a>
+        </div>
+      </div>
+    </nav>
+
+    <main class="container-fluid px-3 px-lg-4 py-4">
+      <div class="row g-4 align-items-start">
+        <div class="col-12 col-xl-4 col-xxl-3">
+          <aside class="scanner-surface setup-panel">
+            <div class="p-3 p-lg-4 border-bottom">
+              <h1 class="h5 mb-1">Setup Instance</h1>
+              <p class="text-secondary mb-0">Configure the Creatio source and custom packages.</p>
+            </div>
+            <form id="scan-form" class="p-3 p-lg-4">
+              <div class="mb-3">
+                <label class="form-label" for="doc-name">Documentation name</label>
+                <input id="doc-name" class="form-control" name="docName" type="text" autocomplete="off" placeholder="Integration API" required />
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="project-path">Creatio project path</label>
+                <input id="project-path" class="form-control" name="projectPath" type="text" autocomplete="off" placeholder="C:\Path\...\CreatioProject\Pkg" required />
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="base-url">Creatio Base URL</label>
+                <input id="base-url" class="form-control" name="baseUrl" type="url" autocomplete="off" value="https://your-creatio-site.com" />
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="package-prefix">Custom package prefix</label>
+                <input id="package-prefix" class="form-control" name="packagePrefix" type="text" autocomplete="off" placeholder="Creatio package prefix" required />
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="auth-mode">Authentication mode</label>
+                <select id="auth-mode" class="form-select" name="authMode">
+                  <option value="bpmcsrf" selected>BPMCSRF</option>
+                  <option value="oauth">OAuth 2.0 Client Credentials</option>
+                </select>
+              </div>
+              <div id="oauth-token-url-field" class="mb-3 d-none">
+                <label class="form-label" for="oauth-token-url">OAuth Token URL</label>
+                <input
+                  id="oauth-token-url"
+                  class="form-control"
+                  name="oauthTokenUrl"
+                  type="url"
+                  autocomplete="off"
+                  placeholder="https://identity.example.com/connect/token"
+                />
+                <div class="form-text">
+                  Enter the Client ID and Client Secret through the Authorize button in Swagger.
+                </div>
+              </div>
+              <div class="d-grid gap-2">
+                <button id="scan-button" class="btn btn-success" type="submit"><i class="bi bi-search me-1"></i>Scan</button>
+                <button id="publish-button" class="btn btn-outline-success" type="button"><i class="bi bi-cloud-arrow-up me-1"></i>Publish</button>
+              </div>
+            </form>
+
+            <div class="px-3 px-lg-4 pb-3">
+              <div id="status" class="alert alert-secondary mb-3" role="status">No scan has been run.</div>
+              <div class="row g-2 scanner-stats">
+                <div class="col-4"><div><strong id="file-count">0</strong><small>.cs files</small></div></div>
+                <div class="col-4"><div><strong id="package-count">0</strong><small>packages</small></div></div>
+                <div class="col-4"><div><strong id="endpoint-count">0</strong><small>endpoints</small></div></div>
+              </div>
+            </div>
+
+            <div class="border-top p-3 p-lg-4">
+              <h2 class="h6 mb-3">C# Files</h2>
+              <div id="file-list" class="file-list"></div>
+            </div>
+          </aside>
+        </div>
+
+        <div class="col-12 col-xl-8 col-xxl-9">
+          <section class="scanner-surface result-panel">
+            <ul class="nav nav-tabs px-3 pt-3" role="tablist">
+              <li class="nav-item"><button class="nav-link tab active" type="button" data-view="endpoints">Endpoints</button></li>
+              <li class="nav-item"><button class="nav-link tab" type="button" data-view="swagger">Swagger</button></li>
+              <li class="nav-item"><button class="nav-link tab" type="button" data-view="json">OpenAPI JSON</button></li>
+            </ul>
+            <section id="view-endpoints" class="view active">
+              <div class="d-flex flex-column flex-sm-row align-items-sm-center justify-content-between gap-2 mb-3">
+                <h2 class="h5 mb-0">Detected Endpoints</h2>
+                <a id="download-json" class="btn btn-sm btn-outline-secondary" href="/generated/openapi.json" download>
+                  <i class="bi bi-download me-1"></i>Download JSON
+                </a>
+              </div>
+              <div id="endpoint-list" class="endpoint-list"></div>
+            </section>
+            <section id="view-swagger" class="view"><div id="swagger-ui"></div></section>
+            <section id="view-json" class="view"><pre id="openapi-json">{}</pre></section>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <div class="modal fade" id="scan-confirm-modal" tabindex="-1" aria-labelledby="scan-confirm-title" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 id="scan-confirm-title" class="modal-title fs-5">Update Scan Results</h2>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <p class="mb-2">This instance already has scan results.</p>
+            <strong id="scan-confirm-name" class="d-block"></strong>
+            <p class="text-secondary mb-0 mt-2">
+              The stored C# files, endpoints, and local OpenAPI document will be replaced by the latest scan.
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-light border" type="button" data-bs-dismiss="modal">Cancel</button>
+            <button id="confirm-scan-button" class="btn btn-success" type="button">
+              <i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>Update Scan
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script src="scanner.js?v=20260624-9"></script>
+  </body>
+</html>
+

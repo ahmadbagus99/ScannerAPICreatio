@@ -1,0 +1,29 @@
+# Local runtime configuration and virtual environment
+.runtime/
+.venv/
+
+# Scanner-generated configuration, documents, and scan output
+data/
+generated/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Python cache and test artifacts
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime logs
+*.log
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

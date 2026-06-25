@@ -1,0 +1,76 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Scanner Settings - Creatio API</title>
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png?v=1" />
+    <link rel="shortcut icon" href="/favicon.ico?v=1" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" />
+    <link rel="stylesheet" href="viewer.css?v=20260624-footer" />
+  </head>
+  <body class="scanner-dashboard">
+    <nav class="navbar bg-white border-bottom sticky-top">
+      <div class="container-fluid px-3 px-lg-4">
+        <div class="navbar-brand py-2">
+          <span class="d-block fw-bold">Scanner Settings</span>
+          <small class="d-block text-secondary fw-normal">Publishing integration with Viewer Service.</small>
+        </div>
+        <a class="btn btn-outline-secondary" href="/index.html">
+          <i class="bi bi-arrow-left" aria-hidden="true"></i>
+          <span class="d-none d-sm-inline ms-1">Instances</span>
+        </a>
+      </div>
+    </nav>
+
+    <main class="container py-4 py-lg-5">
+      <div class="row justify-content-center">
+        <div class="col-12 col-lg-8 col-xl-7">
+          <section class="scanner-surface">
+            <div class="p-3 p-lg-4 border-bottom">
+              <div class="d-flex align-items-start gap-3">
+                <div class="settings-icon"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i></div>
+                <div>
+                  <h1 class="h5 mb-1">Viewer Integration</h1>
+                  <p class="text-secondary mb-0">This configuration is used by all instances when publishing documentation.</p>
+                </div>
+              </div>
+            </div>
+            <form id="integration-form" class="p-3 p-lg-4">
+              <div class="mb-3">
+                <label class="form-label" for="viewer-url">Viewer service URL</label>
+                <input id="viewer-url" class="form-control" type="url" placeholder="https://api-docs.example.com" required />
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="scanner-name">Scanner name</label>
+                <input id="scanner-name" class="form-control" type="text" placeholder="Laptop Ahmad" required />
+              </div>
+              <div class="mb-4">
+                <label class="form-label" for="installation-id">Local Installation ID</label>
+                <div class="input-group">
+                  <span class="input-group-text"><i class="bi bi-fingerprint"></i></span>
+                  <input id="installation-id" class="form-control font-monospace" type="text" disabled />
+                </div>
+                <div class="form-text">This ID is generated automatically and is unique to this scanner installation.</div>
+              </div>
+              <div id="integration-status" class="alert alert-secondary" role="status">Loading configuration...</div>
+              <div class="d-flex flex-column flex-sm-row justify-content-end gap-2">
+                <button id="test-button" class="btn btn-outline-primary" type="button">
+                  <i class="bi bi-arrow-repeat me-1"></i>Check Status
+                </button>
+                <button id="save-button" class="btn btn-success" type="submit">
+                  <i class="bi bi-link-45deg me-1"></i>Register Scanner
+                </button>
+              </div>
+            </form>
+          </section>
+
+        </div>
+      </div>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI" crossorigin="anonymous"></script>
+    <script src="settings.js?v=20260624-5"></script>
+  </body>
+</html>
+

@@ -1,0 +1,146 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Creatio API Instances</title>
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png?v=1" />
+    <link rel="shortcut icon" href="/favicon.ico?v=1" />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB"
+      crossorigin="anonymous"
+    />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" />
+    <link rel="stylesheet" href="viewer.css?v=20260624-footer" />
+  </head>
+  <body class="scanner-dashboard">
+    <nav class="navbar bg-white border-bottom sticky-top">
+      <div class="container-fluid px-3 px-lg-4">
+        <div class="navbar-brand py-2">
+          <span class="d-block fw-bold">Creatio API Instances</span>
+          <small id="dashboard-meta" class="d-block text-secondary fw-normal">Local scanner database.</small>
+        </div>
+        <div class="d-flex gap-2">
+          <a class="btn btn-success" href="/scanner.html">
+            <i class="bi bi-plus-lg" aria-hidden="true"></i>
+            <span class="d-none d-sm-inline ms-1">New Instance</span>
+          </a>
+          <a class="btn btn-outline-secondary" href="/settings.html" title="Settings">
+            <i class="bi bi-gear" aria-hidden="true"></i>
+            <span class="d-none d-sm-inline ms-1">Settings</span>
+          </a>
+        </div>
+      </div>
+    </nav>
+
+    <main class="container-fluid px-3 px-lg-4 py-4">
+      <div class="row g-4">
+        <div class="col-12">
+          <section class="scanner-surface">
+            <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3 p-3 p-lg-4 border-bottom">
+              <div>
+                <h1 class="h5 mb-1">Instance List</h1>
+                <p id="sync-status" class="text-secondary mb-0">Checking publish status with Viewer.</p>
+              </div>
+              <div class="d-flex flex-column flex-sm-row gap-2 dashboard-tools">
+                <div class="input-group dashboard-search">
+                  <span class="input-group-text bg-white"><i class="bi bi-search" aria-hidden="true"></i></span>
+                  <input id="search-input" class="form-control" type="search" placeholder="Search instances..." />
+                </div>
+                <button id="sync-button" class="btn btn-outline-primary text-nowrap" type="button">
+                  <i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>Sync with Viewer
+                </button>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>Name</th>
+                    <th>Prefix</th>
+                    <th>Endpoint</th>
+                    <th>Package</th>
+                    <th>Publish Status</th>
+                    <th>Last Scan</th>
+                    <th class="text-end">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="instance-rows"></tbody>
+              </table>
+            </div>
+            <div id="empty-state" class="dashboard-empty text-center p-5">
+              <i class="bi bi-folder-plus d-block mb-2" aria-hidden="true"></i>
+              No instances yet.
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <div class="modal fade" id="publish-modal" tabindex="-1" aria-labelledby="publish-modal-title" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 id="publish-modal-title" class="modal-title fs-5">Publish Documentation</h2>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div id="publish-confirmation">
+              <p class="mb-2">The following documentation will be published to Viewer:</p>
+              <strong id="publish-instance-name" class="d-block"></strong>
+              <small id="publish-instance-slug" class="text-secondary"></small>
+            </div>
+            <div id="publish-result" class="alert d-none mb-0" role="alert"></div>
+          </div>
+          <div class="modal-footer">
+            <button id="publish-close-button" class="btn btn-light border" type="button" data-bs-dismiss="modal">Cancel</button>
+            <button id="confirm-publish-button" class="btn btn-success" type="button">
+              <i class="bi bi-cloud-arrow-up me-1" aria-hidden="true"></i>
+              Publish
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="delete-modal" tabindex="-1" aria-labelledby="delete-modal-title" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 id="delete-modal-title" class="modal-title fs-5">Delete Local Instance</h2>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div id="delete-confirmation">
+              <p class="mb-2">The following instance and local scan results will be deleted:</p>
+              <strong id="delete-instance-name" class="d-block"></strong>
+              <small id="delete-instance-slug" class="text-secondary"></small>
+              <div id="delete-viewer-option" class="form-check mt-3 d-none">
+                <input id="delete-remote-checkbox" class="form-check-input" type="checkbox" />
+                <label class="form-check-label" for="delete-remote-checkbox">
+                  Also delete the documentation from Viewer
+                </label>
+                <div class="form-text">
+                  If deletion from Viewer fails, the local instance will not be deleted.
+                </div>
+              </div>
+            </div>
+            <div id="delete-result" class="alert d-none mb-0" role="alert"></div>
+          </div>
+          <div class="modal-footer">
+            <button id="delete-close-button" class="btn btn-light border" type="button" data-bs-dismiss="modal">Cancel</button>
+            <button id="confirm-delete-button" class="btn btn-danger" type="button">
+              <i class="bi bi-trash3 me-1" aria-hidden="true"></i>Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI" crossorigin="anonymous"></script>
+    <script src="dashboard.js?v=20260624-7"></script>
+  </body>
+</html>
+
