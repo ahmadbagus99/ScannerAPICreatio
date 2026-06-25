@@ -22,10 +22,26 @@ if (-not (Test-Path $EnvironmentPath)) {
     Copy-Item $EnvironmentExamplePath $EnvironmentPath
     Write-Host ""
     Write-Host "File .env.docker sudah dibuat."
-    Write-Host "Ubah database password dan CREATIO_SOURCE_PATH di:"
+    Write-Host "Ubah database password di:"
     Write-Host "  $EnvironmentPath"
     Write-Host ""
     throw "Konfigurasi deployment belum siap. Edit .env.docker lalu jalankan script ini lagi."
+}
+
+# Auto-detect HOST_BROWSE_ROOT jika belum di-set di .env.docker
+$envContent = Get-Content $EnvironmentPath -Raw
+if ($envContent -notmatch '(?m)^HOST_BROWSE_ROOT\s*=\s*.+') {
+    if ($IsWindows) {
+        $userHome = $env:USERPROFILE -replace '\\', '/'
+        $drive = ($userHome -split '/')[0]
+        $defaultBrowseRoot = "$drive/Users"
+    } elseif ($IsMacOS) {
+        $defaultBrowseRoot = "/Users"
+    } else {
+        $defaultBrowseRoot = "/home"
+    }
+    $env:HOST_BROWSE_ROOT = $defaultBrowseRoot
+    Write-Host "HOST_BROWSE_ROOT tidak di-set, menggunakan default: $defaultBrowseRoot"
 }
 
 $preferredVersions = @("16-alpine", "15-alpine", "14-alpine", "17-alpine")

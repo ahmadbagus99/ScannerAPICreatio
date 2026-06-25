@@ -363,3 +363,102 @@ loadInstances().then(() => {
 });
 updateAuthFields();
 
+// ── Folder browser ────────────────────────────────────────────────────────
+const browseModalEl = document.querySelector("#browse-modal");
+const browseModal = new bootstrap.Modal(browseModalEl);
+const browseList = document.querySelector("#browse-list");
+const browseEmpty = document.querySelector("#browse-empty");
+const browseError = document.querySelector("#browse-error");
+const browseBreadcrumb = document.querySelector("#browse-breadcrumb");
+const browseSelectedLabel = document.querySelector("#browse-selected-label");
+const btnBrowseSelect = document.querySelector("#btn-browse-select");
+const projectPathInput = document.querySelector("#project-path");
+let browseCurrentPath = "";
+let browseSelectedPath = null;
+
+async function browseDir(relPath) {
+  browseList.innerHTML = "";
+  browseEmpty.classList.add("d-none");
+  browseError.classList.add("d-none");
+  browseList.innerHTML = '<div class="list-group-item text-secondary py-3 text-center"><span class="spinner-border spinner-border-sm me-2"></span>Memuat...</div>';
+
+  const url = "/api/browse" + (relPath ? "?path=" + encodeURIComponent(relPath) : "");
+  let data;
+  try {
+    const res = await fetch(url);
+    data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+  } catch (err) {
+    browseList.innerHTML = "";
+    browseError.textContent = "Gagal memuat direktori: " + err.message;
+    browseError.classList.remove("d-none");
+    return;
+  }
+
+  browseCurrentPath = data.current;
+  browseSelectedPath = data.fullPath;
+  browseSelectedLabel.textContent = data.hostPath || data.fullPath;
+  btnBrowseSelect.disabled = data.current === "";
+
+
+  // breadcrumb
+  const parts = data.current ? data.current.split("/") : [];
+  let crumbs = '<span class="me-1">/creatio</span>';
+  let accumulated = "";
+  parts.filter(Boolean).forEach((p, i) => {
+    accumulated += (accumulated ? "/" : "") + p;
+    const snap = accumulated;
+    crumbs += `<i class="bi bi-chevron-right mx-1 opacity-50" aria-hidden="true"></i>`;
+    if (i === parts.length - 1) {
+      crumbs += `<strong>${p}</strong>`;
+    } else {
+      crumbs += `<a href="#" class="browse-crumb text-decoration-none" data-path="${snap}">${p}</a>`;
+    }
+  });
+  browseBreadcrumb.innerHTML = crumbs;
+  browseBreadcrumb.querySelectorAll(".browse-crumb").forEach(a => {
+    a.addEventListener("click", e => { e.preventDefault(); browseDir(a.dataset.path); });
+  });
+
+  browseList.innerHTML = "";
+
+  if (data.parent !== null && data.parent !== undefined) {
+    const up = document.createElement("button");
+    up.type = "button";
+    up.className = "list-group-item list-group-item-action d-flex align-items-center gap-2 py-2";
+    up.innerHTML = '<i class="bi bi-arrow-up text-secondary" aria-hidden="true"></i><span class="text-secondary">..</span>';
+    up.addEventListener("click", () => browseDir(data.parent || ""));
+    browseList.appendChild(up);
+  }
+
+  if (data.entries.length === 0 && data.parent === null) {
+    browseEmpty.classList.remove("d-none");
+    return;
+  }
+
+  data.entries.forEach(name => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "list-group-item list-group-item-action d-flex align-items-center gap-2 py-2";
+    const childPath = data.current ? data.current + "/" + name : name;
+    btn.innerHTML = `<i class="bi bi-folder-fill text-warning" aria-hidden="true"></i>${name}`;
+    btn.addEventListener("click", () => browseDir(childPath));
+    browseList.appendChild(btn);
+  });
+
+  if (data.entries.length === 0) browseEmpty.classList.remove("d-none");
+}
+
+document.querySelector("#btn-browse").addEventListener("click", () => {
+  browseSelectedPath = null;
+  btnBrowseSelect.disabled = true;
+  browseSelectedLabel.textContent = "";
+  browseDir("");
+  browseModal.show();
+});
+
+btnBrowseSelect.addEventListener("click", () => {
+  if (browseSelectedPath) projectPathInput.value = browseSelectedPath;
+  browseModal.hide();
+});
+

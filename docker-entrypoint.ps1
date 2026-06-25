@@ -17,7 +17,9 @@ foreach ($name in $requiredVariables) {
 $databaseUser = [Uri]::EscapeDataString($env:POSTGRES_USER)
 $databasePassword = [Uri]::EscapeDataString($env:POSTGRES_PASSWORD)
 $databaseName = [Uri]::EscapeDataString($env:POSTGRES_DB)
-$databaseUrl = "postgresql://${databaseUser}:${databasePassword}@database:5432/$databaseName"
+$databaseHost = if ($env:POSTGRES_HOST) { $env:POSTGRES_HOST } else { "database" }
+$databasePort = if ($env:POSTGRES_PORT) { $env:POSTGRES_PORT } else { "5432" }
+$databaseUrl = "postgresql://${databaseUser}:${databasePassword}@${databaseHost}:${databasePort}/$databaseName"
 $port = if ($env:PORT) { [int]$env:PORT } else { 8080 }
 
 Write-Host "Menyiapkan Scanner..."

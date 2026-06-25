@@ -49,6 +49,17 @@ else {
     Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
 }
 
+if (-not $env:BROWSE_ROOT) {
+    if ($IsWindows) {
+        $drive = (Split-Path $env:USERPROFILE -Qualifier)
+        $env:BROWSE_ROOT = "$drive\Users".Replace("\", "/")
+    } elseif ($IsMacOS) {
+        $env:BROWSE_ROOT = "/Users"
+    } else {
+        $env:BROWSE_ROOT = "/home"
+    }
+}
+
 Write-Host "Menjalankan Scanner di http://$($config.host):$($config.port)"
 & $Python -u (Join-Path $Root "server.py")
 exit $LASTEXITCODE

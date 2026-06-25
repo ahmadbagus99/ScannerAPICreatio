@@ -1093,6 +1093,28 @@ def publish_instance(slug: str) -> dict[str, Any]:
     return {"item": item, "viewer": response}
 
 
+def _is_dir_safe(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except (PermissionError, OSError):
+        return False
+
+
+def _host_display_path(target: Path, browse_root: Path) -> str:
+    browse_root_env = os.environ.get("BROWSE_ROOT", "/host")
+    host_browse_root = os.environ.get("HOST_BROWSE_ROOT", "").rstrip("/\\")
+    # Dalam Docker, BROWSE_ROOT=/host dan HOST_BROWSE_ROOT=path asli di host.
+    # Native: BROWSE_ROOT sudah path asli, tidak perlu translasi.
+    display_root = host_browse_root if host_browse_root and browse_root_env == "/host" else browse_root_env.rstrip("/\\")
+    sep = "\\" if len(display_root) >= 2 and display_root[1] == ":" else "/"
+    if target == browse_root:
+        return display_root or sep
+    rel = str(target.relative_to(browse_root))
+    if sep == "\\":
+        rel = rel.replace("/", "\\")
+    return display_root + sep + rel
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -1178,6 +1200,38 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = unquote(self.path.split("?", 1)[0])
+        if path == "/api/browse":
+            qs = dict(parse_qsl(self.path.split("?", 1)[1]) if "?" in self.path else [])
+            browse_root = Path(os.environ.get("BROWSE_ROOT", "/host"))
+            rel = qs.get("path", "").strip("/")
+            target = (browse_root / rel).resolve() if rel else browse_root.resolve()
+            if not str(target).startswith(str(browse_root.resolve())):
+                self.send_json(400, {"error": "Path tidak diizinkan."})
+                return
+            if not target.is_dir():
+                self.send_json(404, {"error": "Direktori tidak ditemukan."})
+                return
+            try:
+                entries = sorted(
+                    [
+                        e.name for e in target.iterdir()
+                        if not e.name.startswith(".")
+                        and _is_dir_safe(e)
+                    ],
+                    key=str.lower,
+                )
+            except PermissionError:
+                self.send_json(403, {"error": "Akses ditolak."})
+                return
+            parent = str(target.relative_to(browse_root).parent) if target != browse_root else None
+            self.send_json(200, {
+                "current": str(target.relative_to(browse_root)) if target != browse_root else "",
+                "parent": None if parent == "." or target == browse_root else parent,
+                "fullPath": str(target),
+                "hostPath": _host_display_path(target, browse_root),
+                "entries": entries,
+            })
+            return
         if path == "/api/instances":
             self.send_json(200, read_catalog())
             return
