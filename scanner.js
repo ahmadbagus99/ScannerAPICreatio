@@ -398,21 +398,21 @@ async function browseDir(relPath) {
   browseCurrentPath = data.current;
   browseSelectedPath = data.fullPath;
   browseSelectedLabel.textContent = data.hostPath || data.fullPath;
-  btnBrowseSelect.disabled = data.current === "";
+  btnBrowseSelect.disabled = !data.fullPath;
 
 
   // breadcrumb
   const parts = data.current ? data.current.split("/") : [];
-  let crumbs = '<span class="me-1">/creatio</span>';
+  let crumbs = `<a href="#" class="browse-crumb text-decoration-none me-1" data-path="">${escapeHtml(data.rootLabel || "/creatio")}</a>`;
   let accumulated = "";
   parts.filter(Boolean).forEach((p, i) => {
     accumulated += (accumulated ? "/" : "") + p;
     const snap = accumulated;
     crumbs += `<i class="bi bi-chevron-right mx-1 opacity-50" aria-hidden="true"></i>`;
     if (i === parts.length - 1) {
-      crumbs += `<strong>${p}</strong>`;
+      crumbs += `<strong>${escapeHtml(p)}</strong>`;
     } else {
-      crumbs += `<a href="#" class="browse-crumb text-decoration-none" data-path="${snap}">${p}</a>`;
+      crumbs += `<a href="#" class="browse-crumb text-decoration-none" data-path="${escapeHtml(snap)}">${escapeHtml(p)}</a>`;
     }
   });
   browseBreadcrumb.innerHTML = crumbs;
@@ -441,7 +441,8 @@ async function browseDir(relPath) {
     btn.type = "button";
     btn.className = "list-group-item list-group-item-action d-flex align-items-center gap-2 py-2";
     const childPath = data.current ? data.current + "/" + name : name;
-    btn.innerHTML = `<i class="bi bi-folder-fill text-warning" aria-hidden="true"></i>${name}`;
+    const isDrive = data.current === "" && /^[A-Za-z]:$/.test(name);
+    btn.innerHTML = `<i class="bi ${isDrive ? "bi-device-hdd-fill text-secondary" : "bi-folder-fill text-warning"}" aria-hidden="true"></i>${escapeHtml(name)}`;
     btn.addEventListener("click", () => browseDir(childPath));
     browseList.appendChild(btn);
   });

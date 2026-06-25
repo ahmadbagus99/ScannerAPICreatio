@@ -6,6 +6,7 @@ import re
 import base64
 import hashlib
 import secrets
+import sys
 import uuid
 from dataclasses import dataclass, asdict
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -1100,6 +1101,57 @@ def _is_dir_safe(path: Path) -> bool:
         return False
 
 
+def get_browse_root() -> Path:
+    configured = os.environ.get("BROWSE_ROOT", "").strip()
+    if os.name == "nt" and configured == "__drives__":
+        return Path("__drives__")
+    if configured:
+        candidate = Path(configured).expanduser()
+        if _is_dir_safe(candidate):
+            return candidate.resolve()
+
+    if os.name == "nt":
+        return Path("__drives__")
+    else:
+        candidate = Path("/Users") if sys.platform == "darwin" else Path("/home")
+
+    if _is_dir_safe(candidate):
+        return candidate.resolve()
+    return Path.home().resolve()
+
+
+def windows_drives() -> list[str]:
+    if os.name != "nt":
+        return []
+    return [
+        f"{letter}:"
+        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        if _is_dir_safe(Path(f"{letter}:\\"))
+    ]
+
+
+def windows_drive_target(relative_path: str) -> tuple[Path, Path] | None:
+    normalized = relative_path.replace("\\", "/").strip("/")
+    if not normalized:
+        return None
+
+    drive_name, _, remainder = normalized.partition("/")
+    if not re.fullmatch(r"[A-Za-z]:", drive_name):
+        raise ValueError("Path tidak diizinkan.")
+
+    drive_name = drive_name.upper()
+    if drive_name not in windows_drives():
+        raise FileNotFoundError("Drive tidak ditemukan.")
+
+    drive_root = Path(f"{drive_name}\\").resolve()
+    target = (drive_root / remainder).resolve() if remainder else drive_root
+    try:
+        target.relative_to(drive_root)
+    except ValueError as exc:
+        raise ValueError("Path tidak diizinkan.") from exc
+    return drive_root, target
+
+
 def _host_display_path(target: Path, browse_root: Path) -> str:
     browse_root_env = os.environ.get("BROWSE_ROOT", "/host")
     host_browse_root = os.environ.get("HOST_BROWSE_ROOT", "").rstrip("/\\")
@@ -1202,12 +1254,38 @@ class Handler(SimpleHTTPRequestHandler):
         path = unquote(self.path.split("?", 1)[0])
         if path == "/api/browse":
             qs = dict(parse_qsl(self.path.split("?", 1)[1]) if "?" in self.path else [])
-            browse_root = Path(os.environ.get("BROWSE_ROOT", "/host"))
+            browse_root = get_browse_root()
             rel = qs.get("path", "").strip("/")
-            target = (browse_root / rel).resolve() if rel else browse_root.resolve()
-            if not str(target).startswith(str(browse_root.resolve())):
-                self.send_json(400, {"error": "Path tidak diizinkan."})
+            drive_mode = os.name == "nt" and str(browse_root) == "__drives__"
+
+            if drive_mode and not rel:
+                self.send_json(200, {
+                    "current": "",
+                    "parent": None,
+                    "fullPath": "",
+                    "hostPath": "This PC",
+                    "rootLabel": "This PC",
+                    "entries": windows_drives(),
+                })
                 return
+
+            try:
+                if drive_mode:
+                    drive_result = windows_drive_target(rel)
+                    if drive_result is None:
+                        raise ValueError("Path tidak diizinkan.")
+                    allowed_root, target = drive_result
+                else:
+                    allowed_root = browse_root
+                    target = (browse_root / rel).resolve() if rel else browse_root
+                    target.relative_to(allowed_root)
+            except ValueError as exc:
+                self.send_json(400, {"error": str(exc)})
+                return
+            except FileNotFoundError as exc:
+                self.send_json(404, {"error": str(exc)})
+                return
+
             if not target.is_dir():
                 self.send_json(404, {"error": "Direktori tidak ditemukan."})
                 return
@@ -1223,12 +1301,34 @@ class Handler(SimpleHTTPRequestHandler):
             except PermissionError:
                 self.send_json(403, {"error": "Akses ditolak."})
                 return
-            parent = str(target.relative_to(browse_root).parent) if target != browse_root else None
+
+            if drive_mode:
+                drive_prefix = f"{allowed_root.drive.upper()}"
+                relative = target.relative_to(allowed_root)
+                current = drive_prefix if str(relative) == "." else (
+                    drive_prefix + "/" + relative.as_posix()
+                )
+                parent = "" if target == allowed_root else current.rsplit("/", 1)[0]
+                full_path = str(target)
+                host_path = str(target)
+                root_label = "This PC"
+            else:
+                relative = target.relative_to(browse_root)
+                current = "" if target == browse_root else relative.as_posix()
+                parent_path = relative.parent
+                parent = None if target == browse_root else (
+                    "" if str(parent_path) == "." else parent_path.as_posix()
+                )
+                full_path = str(target)
+                host_path = _host_display_path(target, browse_root)
+                root_label = str(browse_root)
+
             self.send_json(200, {
-                "current": str(target.relative_to(browse_root)) if target != browse_root else "",
-                "parent": None if parent == "." or target == browse_root else parent,
-                "fullPath": str(target),
-                "hostPath": _host_display_path(target, browse_root),
+                "current": current,
+                "parent": parent,
+                "fullPath": full_path,
+                "hostPath": host_path,
+                "rootLabel": root_label,
                 "entries": entries,
             })
             return

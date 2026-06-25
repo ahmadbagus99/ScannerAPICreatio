@@ -159,7 +159,8 @@ After approval, return to Scanner Settings and select **Check Status**.
 
 1. Open the Scanner dashboard.
 2. Add or edit a Creatio instance.
-3. Set the Creatio source directory and scanning options.
+3. Set the Creatio source directory and scanning options. On native Windows,
+   the folder browser starts at **This PC** so you can select a drive first.
 4. Run the scan.
 5. Review the generated OpenAPI document.
 6. Select **Publish** to send it to the Viewer.

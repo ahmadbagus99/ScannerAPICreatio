@@ -49,17 +49,27 @@ else {
     Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
 }
 
-if (-not $env:BROWSE_ROOT) {
-    if ($env:OS -eq "Windows_NT") {
-        $drive = (Split-Path $env:USERPROFILE -Qualifier)
-        $env:BROWSE_ROOT = "$drive/Users"
-    } elseif ($IsMacOS) {
-        $env:BROWSE_ROOT = "/Users"
-    } else {
-        $env:BROWSE_ROOT = "/home"
+if ($env:OS -eq "Windows_NT") {
+    # Native Windows always starts the browser at "This PC".
+    $env:BROWSE_ROOT = "__drives__"
+}
+elseif ($IsMacOS) {
+    $defaultBrowseRoot = "/Users"
+}
+else {
+    $defaultBrowseRoot = "/home"
+}
+
+if ($env:OS -ne "Windows_NT") {
+    if (
+        [string]::IsNullOrWhiteSpace($env:BROWSE_ROOT) -or
+        -not (Test-Path -LiteralPath $env:BROWSE_ROOT -PathType Container)
+    ) {
+        $env:BROWSE_ROOT = $defaultBrowseRoot
     }
 }
 
 Write-Host "Menjalankan Scanner di http://$($config.host):$($config.port)"
+Write-Host "Browse root: $env:BROWSE_ROOT"
 & $Python -u (Join-Path $Root "server.py")
 exit $LASTEXITCODE
