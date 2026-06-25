@@ -159,8 +159,9 @@ After approval, return to Scanner Settings and select **Check Status**.
 
 1. Open the Scanner dashboard.
 2. Add or edit a Creatio instance.
-3. Set the Creatio source directory and scanning options. On native Windows,
-   the folder browser starts at **This PC** so you can select a drive first.
+3. Click the folder icon next to the **Creatio project path** field and browse
+   to the Creatio source directory. The browser starts from the user home
+   directory and works on native and Docker deployments alike.
 4. Run the scan.
 5. Review the generated OpenAPI document.
 6. Select **Publish** to send it to the Viewer.
@@ -175,11 +176,10 @@ every ten minutes while active, and when **Sync with Viewer** is selected.
 
 The Docker deployment:
 
-1. Builds a Scanner image with Python and PowerShell
-2. Creates a PostgreSQL container and database
-3. Mounts the host Creatio source directory read-only at `/creatio`
-4. Runs `setup.ps1` inside the Scanner container
-5. Runs `start.ps1` inside the Scanner container
+1. Builds a Scanner image with Python and PowerShell (arm64 and amd64)
+2. Uses an existing or shared PostgreSQL container, or starts a new one
+3. Mounts the host user directory read-only so the folder browser can reach any Creatio source path
+4. Runs `setup.ps1` and `start.ps1` inside the Scanner container
 
 ### First Run
 
@@ -193,22 +193,20 @@ The first run creates `.env.docker` from `.env.docker.example` and stops.
 Edit the generated file:
 
 ```env
+SCANNER_PORT=5002
+
+# Folder root shown in the path browser — match your host OS
+# Mac:     HOST_BROWSE_ROOT=/Users
+# Linux:   HOST_BROWSE_ROOT=/home
+# Windows: HOST_BROWSE_ROOT=C:/Users
+HOST_BROWSE_ROOT=/Users
+
 POSTGRES_DB=creatio_scanner
 POSTGRES_USER=creatio_user
 POSTGRES_PASSWORD=change-this-db-password
-SCANNER_PORT=8080
-CREATIO_SOURCE_PATH=C:/CreatioSource
 ```
 
-`CREATIO_SOURCE_PATH` must be an absolute host path containing the Creatio
-source packages. Examples:
-
-```text
-Windows: C:/Development/Creatio/Terrasoft.Configuration/Pkg
-Linux:   /srv/creatio/Terrasoft.Configuration/Pkg
-```
-
-Deploy after saving the configuration:
+Deploy after saving:
 
 ```powershell
 .\deploy-docker.ps1 -Detached
@@ -217,28 +215,46 @@ Deploy after saving the configuration:
 Open:
 
 ```text
-http://localhost:8080
+http://localhost:5002
 ```
 
-When creating a Scanner instance through the UI, use this source path:
+When creating a Scanner instance through the UI, use the folder browser to
+navigate to the Creatio source directory. The browser shows host paths
+(e.g. `/Users/you/Creatio/Pkg`) and the Scanner reads from the corresponding
+mounted path inside the container automatically.
 
-```text
-/creatio
+### Shared PostgreSQL
+
+To reuse an existing PostgreSQL container instead of starting a new one, add
+the connection details to `.env.docker`:
+
+```env
+POSTGRES_HOST=host.docker.internal
+POSTGRES_PORT=5433
+POSTGRES_DB=creatio_scanner
+POSTGRES_USER=your_user
+POSTGRES_PASSWORD=your_password
 ```
 
-The host source directory is mounted read-only. The Scanner cannot modify the
-Creatio source files.
+Create the database on the existing instance before deploying:
 
-If the Viewer runs directly on the Docker host, configure the Scanner Viewer
-URL as:
+```sql
+CREATE DATABASE creatio_scanner;
+```
+
+When `POSTGRES_HOST` is set the deploy script skips the managed database
+container entirely.
+
+### Viewer Connection from Docker
+
+If the Viewer runs on the same Docker host, configure the Scanner Viewer URL as:
 
 ```text
-http://host.docker.internal:8090
+http://host.docker.internal:5003
 ```
 
 Do not use `127.0.0.1` for a host service from inside the Scanner container,
-because it points back to the Scanner container itself. A public HTTPS Viewer
-URL can be used without this special hostname.
+because it resolves back to the container itself.
 
 ### Docker Commands
 
@@ -254,29 +270,52 @@ Stop the deployment:
 docker compose --env-file .env.docker down
 ```
 
-Stop the deployment and permanently delete its PostgreSQL and runtime volumes:
+Stop and delete runtime volumes:
 
 ```powershell
 docker compose --env-file .env.docker down -v
 ```
 
-The `-v` option permanently deletes Docker-managed Scanner data.
-
 ## Environment Variable Reference
 
-The normal local workflow uses `setup.ps1` and `start.ps1`; manual environment
-variables are not required. Deployment platforms may set these variables
-directly:
+The normal local workflow uses `setup.ps1` and `start.ps1`. Manual environment
+variables are only needed for headless or platform deployments.
 
-```env
-HOST=0.0.0.0
-PORT=8080
-STORAGE_BACKEND=postgres
-DATABASE_URL=postgresql://user:password@localhost:5432/creatio_scanner
-```
+### Native
 
-See `.env.example` for a template. The Python server does not automatically
-load `.env` files.
+`start.ps1` sets these automatically; override them only if needed:
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `STORAGE_BACKEND` | `json` or `postgres` | From `.runtime/config.json` |
+| `DATABASE_URL` | PostgreSQL connection URL | From `.runtime/config.json` |
+| `HOST` | HTTP bind address | From `.runtime/config.json` |
+| `PORT` | HTTP port | From `.runtime/config.json` |
+| `BROWSE_ROOT` | Root folder for the path browser | Auto-detected by `start.ps1` |
+
+`BROWSE_ROOT` defaults:
+
+| OS | Default |
+| --- | --- |
+| Windows | `C:/Users` (drive detected from `USERPROFILE`) |
+| macOS | `/Users` |
+| Linux | `/home` |
+
+### Docker
+
+Set in `.env.docker`:
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `SCANNER_PORT` | Host port for the Scanner UI | `5002` |
+| `HOST_BROWSE_ROOT` | Host path shown in the folder browser | Required |
+| `POSTGRES_DB` | Database name | Required |
+| `POSTGRES_USER` | Database user | Required |
+| `POSTGRES_PASSWORD` | Database password | Required |
+| `POSTGRES_HOST` | External PostgreSQL host | Managed container |
+| `POSTGRES_PORT` | External PostgreSQL port | `5432` |
+
+See `.env.docker.example` for a full template.
 
 ## Repository Safety
 
