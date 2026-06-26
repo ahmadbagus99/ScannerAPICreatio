@@ -183,8 +183,13 @@ async function loadSwagger() {
       spec.components?.securitySchemes?.oauth2ClientCredentials?.flows
         ?.clientCredentials;
     const configuredTokenUrl = oauthFlow?.tokenUrl || "";
+    const authenticationMode = spec["x-authentication-mode"] || "bpmcsrf";
+    const creatioServerUrl = spec.servers?.[0]?.url || "";
     const oauthProxyUrl = activeSlug
       ? `${window.location.origin}/api/oauth/token/${encodeURIComponent(activeSlug)}`
+      : "";
+    const bpmcsrfProxyPrefix = activeSlug
+      ? `${window.location.origin}/api/bpmcsrf/proxy/${encodeURIComponent(activeSlug)}`
       : "";
     SwaggerUIBundle({
       spec,
@@ -197,6 +202,27 @@ async function loadSwagger() {
       requestInterceptor: (request) => {
         if (configuredTokenUrl && request.url === configuredTokenUrl && oauthProxyUrl) {
           request.url = oauthProxyUrl;
+          return request;
+        }
+        if (
+          authenticationMode === "bpmcsrf" &&
+          creatioServerUrl &&
+          bpmcsrfProxyPrefix
+        ) {
+          const target = new URL(request.url, window.location.href);
+          const server = new URL(creatioServerUrl, window.location.href);
+          const serverPath = server.pathname.replace(/\/+$/, "");
+          const matchesServer =
+            target.origin === server.origin &&
+            (
+              target.pathname === serverPath ||
+              target.pathname.startsWith(`${serverPath}/`) ||
+              (!serverPath && target.pathname.startsWith("/"))
+            );
+          if (matchesServer) {
+            const relativePath = target.pathname.slice(serverPath.length) || "/";
+            request.url = `${bpmcsrfProxyPrefix}${relativePath}${target.search}`;
+          }
         }
         return request;
       }
@@ -462,4 +488,3 @@ btnBrowseSelect.addEventListener("click", () => {
   if (browseSelectedPath) projectPathInput.value = browseSelectedPath;
   browseModal.hide();
 });
-
