@@ -29,6 +29,17 @@ STORAGE = Storage(ROOT)
 DEFAULT_BASE_URL = "https://your-creatio-site.com"
 DEFAULT_VIEWER_URL = "http://127.0.0.1:8090"
 BPMCSRF_SESSIONS: dict[str, dict[str, str]] = {}
+BPMCSRF_AUTH_KEYS: dict[str, str] = {}
+HOP_BY_HOP_HEADERS = {
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+}
 IGNORED_DIRS = {
     ".git",
     ".vs",
@@ -810,13 +821,18 @@ def build_openapi(
     return openapi
 
 
-def normalize_bpmcsrf_openapi(openapi: dict[str, Any]) -> dict[str, Any]:
+def normalize_bpmcsrf_openapi(openapi: dict[str, Any], slug: str = "") -> dict[str, Any]:
     if openapi.get("x-authentication-mode", "bpmcsrf") != "bpmcsrf":
         return openapi
 
     components = openapi.setdefault("components", {})
     security_schemes = components.setdefault("securitySchemes", {})
-    if "creatioCookieAuth" in security_schemes or "creatioBasicAuth" not in security_schemes:
+    current_scheme = security_schemes.get("creatioBasicAuth", {})
+    if (
+        "creatioCookieAuth" in security_schemes
+        or current_scheme.get("type") != "http"
+        or current_scheme.get("scheme") != "basic"
+    ):
         security_schemes.pop("creatioCookieAuth", None)
         security_schemes["creatioBasicAuth"] = {
             "type": "http",
@@ -889,6 +905,13 @@ def oauth_token_url_for_instance(slug: str) -> str:
     return token_url
 
 
+def oauth_base_url_for_instance(slug: str) -> str:
+    item = find_catalog_item(slug)
+    if not item or item.get("authMode") != "oauth":
+        raise ValueError("OAuth is not configured for this instance.")
+    return normalize_base_url(str(item.get("baseUrl", DEFAULT_BASE_URL)))
+
+
 def bpmcsrf_base_url_for_instance(slug: str) -> str:
     item = find_catalog_item(slug)
     if not item or item.get("authMode", "bpmcsrf") != "bpmcsrf":
@@ -915,6 +938,63 @@ def bpmcsrf_token(slug: str) -> str:
     for name, value in session.items():
         if name.lower() == "bpmcsrf":
             return value
+    return ""
+
+
+def clear_bpmcsrf_session(slug: str) -> None:
+    BPMCSRF_SESSIONS.pop(slug, None)
+    BPMCSRF_AUTH_KEYS.pop(slug, None)
+
+
+def bpmcsrf_auth_key(username: str, password: str) -> str:
+    return hashlib.sha256(f"{username}\0{password}".encode("utf-8")).hexdigest()
+
+
+def creatio_login_error(slug: str, base_url: str, username: str, password: str) -> str:
+    clear_bpmcsrf_session(slug)
+    login_body = json.dumps(
+        {"UserName": username, "UserPassword": password}
+    ).encode("utf-8")
+    login_request = Request(
+        f"{base_url}/ServiceModel/AuthService.svc/Login",
+        data=login_body,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(login_request, timeout=30) as login_response:
+            response_body = login_response.read()
+            response_headers = login_response.headers
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        try:
+            payload = json.loads(detail)
+            detail = payload.get("Message") or payload.get("error") or detail
+        except json.JSONDecodeError:
+            pass
+        return detail or "Creatio rejected the username or password."
+
+    try:
+        login_result = json.loads(response_body)
+    except json.JSONDecodeError:
+        return (
+            "Creatio login did not return JSON. Check the Creatio Base URL "
+            "and username/password."
+        )
+
+    if not isinstance(login_result, dict):
+        return "Creatio login returned an invalid response."
+    if login_result.get("Code", 0) != 0:
+        return (
+            login_result.get("Message")
+            or login_result.get("Exception")
+            or "Incorrect username or password."
+        )
+
+    update_bpmcsrf_cookies(slug, response_headers)
+    if not bpmcsrf_token(slug):
+        return "Creatio login did not return a BPMCSRF session cookie."
+    BPMCSRF_AUTH_KEYS[slug] = bpmcsrf_auth_key(username, password)
     return ""
 
 
@@ -1350,6 +1430,105 @@ class Handler(SimpleHTTPRequestHandler):
         except (ValueError, URLError) as exc:
             self.send_json(502, {"error": str(exc)})
 
+    def proxy_oauth_request(self, slug: str, method: str) -> None:
+        try:
+            base_url = oauth_base_url_for_instance(slug)
+            query = dict(parse_qsl(urlsplit(self.path).query, keep_blank_values=True))
+            target_url = str(query.get("url", "")).strip()
+            if not target_url:
+                self.send_json(400, {"error": "The OAuth proxy target is required."})
+                return
+
+            base = urlsplit(base_url)
+            target = urlsplit(target_url)
+            base_path = base.path.rstrip("/")
+            target_in_base = (
+                target.scheme in {"http", "https"}
+                and target.scheme.lower() == base.scheme.lower()
+                and target.hostname == base.hostname
+                and target.port == base.port
+                and (
+                    not base_path
+                    or target.path == base_path
+                    or target.path.startswith(f"{base_path}/")
+                )
+            )
+            if not target_in_base or target.username or target.password:
+                self.send_json(403, {"error": "The OAuth proxy target is not allowed."})
+                return
+
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length) if length else None
+            excluded_request_headers = HOP_BY_HOP_HEADERS | {
+                "host",
+                "content-length",
+                "origin",
+                "referer",
+                "cookie",
+                "accept-encoding",
+            }
+            headers = {
+                name: value
+                for name, value in self.headers.items()
+                if name.lower() not in excluded_request_headers
+            }
+            request = Request(
+                target_url,
+                data=None if method in {"GET", "HEAD"} else body,
+                headers=headers,
+                method=method,
+            )
+            try:
+                response = urlopen(request, timeout=60)
+            except HTTPError as exc:
+                response = exc
+
+            with response:
+                response_body = response.read()
+                self.send_response(response.status)
+                excluded_response_headers = HOP_BY_HOP_HEADERS | {
+                    "content-length",
+                    "content-encoding",
+                    "set-cookie",
+                    "access-control-allow-origin",
+                    "access-control-allow-credentials",
+                    "access-control-allow-headers",
+                    "access-control-allow-methods",
+                }
+                for name, value in response.headers.items():
+                    if name.lower() not in excluded_response_headers:
+                        self.send_header(name, value)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(response_body)))
+                self.end_headers()
+                if method != "HEAD":
+                    self.wfile.write(response_body)
+        except (ValueError, URLError, OSError) as exc:
+            self.send_json(502, {"error": f"The target API could not be reached: {exc}"})
+
+    def proxy_bpmcsrf_token(self, slug: str) -> None:
+        try:
+            base_url = bpmcsrf_base_url_for_instance(slug)
+        except ValueError:
+            self.send_json(404, {"error": "BPMCSRF is not configured for this instance."})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            form_data = dict(parse_qsl(body.decode("utf-8"), keep_blank_values=True))
+            username = form_data.get("username", "")
+            password = form_data.get("password", "")
+            if not username or not password:
+                self.send_json(400, {"error": "Username and password are required."})
+                return
+            error = creatio_login_error(slug, base_url, username, password)
+            if error:
+                self.send_json(401, {"error": error})
+                return
+            self.send_json(200, {"access_token": "bpmcsrf-session", "token_type": "bearer"})
+        except (URLError, ValueError, OSError) as exc:
+            self.send_json(502, {"error": f"The target API could not be reached: {exc}"})
+
     def proxy_bpmcsrf_request(
         self, slug: str, proxied_path: str, method: str
     ) -> None:
@@ -1362,6 +1541,9 @@ class Handler(SimpleHTTPRequestHandler):
             content_type = self.headers.get("Content-Type", "")
             authorization = self.headers.get("Authorization", "")
             basic_credentials = basic_auth_credentials(authorization)
+            requested_auth_key = (
+                bpmcsrf_auth_key(*basic_credentials) if basic_credentials else ""
+            )
             if is_login:
                 if not content_type.lower().startswith("application/json"):
                     self.send_json(
@@ -1378,10 +1560,18 @@ class Handler(SimpleHTTPRequestHandler):
                         {"error": "Username and Password are required."},
                     )
                     return
+                clear_bpmcsrf_session(slug)
                 body = json.dumps(
                     {"UserName": username, "UserPassword": password}
                 ).encode("utf-8")
-            elif not BPMCSRF_SESSIONS.get(slug):
+                content_type = "application/json"
+            elif (
+                not bpmcsrf_token(slug)
+                or (
+                    requested_auth_key
+                    and BPMCSRF_AUTH_KEYS.get(slug) != requested_auth_key
+                )
+            ):
                 if not basic_credentials:
                     self.send_json(
                         401,
@@ -1389,37 +1579,11 @@ class Handler(SimpleHTTPRequestHandler):
                     )
                     return
                 username, password = basic_credentials
-                login_body = json.dumps(
-                    {"UserName": username, "UserPassword": password}
-                ).encode("utf-8")
-                login_request = Request(
-                    f"{base_url}/ServiceModel/AuthService.svc/Login",
-                    data=login_body,
-                    headers={
-                        "Accept": "application/json",
-                        "Content-Type": "application/json",
-                    },
-                    method="POST",
-                )
-                try:
-                    with urlopen(login_request, timeout=30) as login_response:
-                        login_response.read()
-                        update_bpmcsrf_cookies(slug, login_response.headers)
-                except HTTPError as exc:
-                    detail = exc.read()
-                    self.send_response(exc.code)
-                    self.send_header(
-                        "Content-Type",
-                        exc.headers.get("Content-Type", "application/json"),
-                    )
-                    self.send_header("Content-Length", str(len(detail)))
-                    self.end_headers()
-                    self.wfile.write(detail)
-                    return
-                if not BPMCSRF_SESSIONS.get(slug):
+                error = creatio_login_error(slug, base_url, username, password)
+                if error:
                     self.send_json(
                         401,
-                        {"error": "Creatio login did not return a BPMCSRF session cookie."},
+                        {"error": error},
                     )
                     return
 
@@ -1467,7 +1631,33 @@ class Handler(SimpleHTTPRequestHandler):
                 status = exc.code
                 response_headers = exc.headers
 
+            if is_login and status < 400:
+                try:
+                    login_result = json.loads(response_body)
+                    if login_result.get("Code", 0) != 0:
+                        message = login_result.get("Message", "Incorrect username or password.")
+                        self.send_json(401, {"error": message})
+                        return
+                except (json.JSONDecodeError, AttributeError):
+                    self.send_json(
+                        401,
+                        {
+                            "error": (
+                                "Creatio login did not return JSON. Check the "
+                                "Creatio Base URL and username/password."
+                            )
+                        },
+                    )
+                    return
             update_bpmcsrf_cookies(slug, response_headers)
+            if is_login and status < 400 and not bpmcsrf_token(slug):
+                self.send_json(
+                    401,
+                    {"error": "Creatio login did not return a BPMCSRF session cookie."},
+                )
+                return
+            if is_login and status < 400:
+                BPMCSRF_AUTH_KEYS[slug] = bpmcsrf_auth_key(username, password)
             self.send_response(status)
             self.send_header(
                 "Content-Type",
@@ -1496,6 +1686,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = unquote(self.path.split("?", 1)[0])
+        oauth_proxy_match = re.fullmatch(r"/api/oauth/proxy/([^/]+)", path)
+        if oauth_proxy_match:
+            self.proxy_oauth_request(oauth_proxy_match.group(1), "GET")
+            return
         bpmcsrf_match = re.fullmatch(r"/api/bpmcsrf/proxy/([^/]+)(/.*)?", path)
         if bpmcsrf_match:
             self.proxy_bpmcsrf_request(
@@ -1600,7 +1794,7 @@ class Handler(SimpleHTTPRequestHandler):
             if document is None:
                 self.send_json(404, {"error": "Documentation not found."})
                 return
-            self.send_json(200, normalize_bpmcsrf_openapi(document))
+            self.send_json(200, normalize_bpmcsrf_openapi(document, document_match.group(1)))
             return
         result_match = re.fullmatch(r"/api/instances/([^/]+)/scan-result", path)
         if result_match:
@@ -1609,7 +1803,7 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json(404, {"error": "Scan results not found."})
                 return
             if isinstance(result.get("openapi"), dict):
-                result["openapi"] = normalize_bpmcsrf_openapi(result["openapi"])
+                result["openapi"] = normalize_bpmcsrf_openapi(result["openapi"], result_match.group(1))
             self.send_json(200, result)
             return
         super().do_GET()
@@ -1619,6 +1813,14 @@ class Handler(SimpleHTTPRequestHandler):
         oauth_match = re.fullmatch(r"/api/oauth/token/([^/]+)", path)
         if oauth_match:
             self.proxy_oauth_token(oauth_match.group(1))
+            return
+        oauth_proxy_match = re.fullmatch(r"/api/oauth/proxy/([^/]+)", path)
+        if oauth_proxy_match:
+            self.proxy_oauth_request(oauth_proxy_match.group(1), "POST")
+            return
+        bpmcsrf_token_match = re.fullmatch(r"/api/bpmcsrf/token/([^/]+)", path)
+        if bpmcsrf_token_match:
+            self.proxy_bpmcsrf_token(bpmcsrf_token_match.group(1))
             return
         bpmcsrf_match = re.fullmatch(r"/api/bpmcsrf/proxy/([^/]+)(/.*)?", path)
         if bpmcsrf_match:
@@ -1760,6 +1962,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         path = unquote(self.path.split("?", 1)[0])
+        oauth_proxy_match = re.fullmatch(r"/api/oauth/proxy/([^/]+)", path)
+        if oauth_proxy_match:
+            self.proxy_oauth_request(oauth_proxy_match.group(1), "PUT")
+            return
         bpmcsrf_match = re.fullmatch(r"/api/bpmcsrf/proxy/([^/]+)(/.*)?", path)
         if not bpmcsrf_match:
             self.send_json(404, {"error": "Endpoint not found."})
@@ -1770,6 +1976,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_PATCH(self) -> None:
         path = unquote(self.path.split("?", 1)[0])
+        oauth_proxy_match = re.fullmatch(r"/api/oauth/proxy/([^/]+)", path)
+        if oauth_proxy_match:
+            self.proxy_oauth_request(oauth_proxy_match.group(1), "PATCH")
+            return
         bpmcsrf_match = re.fullmatch(r"/api/bpmcsrf/proxy/([^/]+)(/.*)?", path)
         if not bpmcsrf_match:
             self.send_json(404, {"error": "Endpoint not found."})
@@ -1780,6 +1990,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         path = unquote(self.path.split("?", 1)[0])
+        oauth_proxy_match = re.fullmatch(r"/api/oauth/proxy/([^/]+)", path)
+        if oauth_proxy_match:
+            self.proxy_oauth_request(oauth_proxy_match.group(1), "DELETE")
+            return
         bpmcsrf_match = re.fullmatch(r"/api/bpmcsrf/proxy/([^/]+)(/.*)?", path)
         if bpmcsrf_match:
             self.proxy_bpmcsrf_request(

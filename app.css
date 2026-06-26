@@ -147,6 +147,10 @@ body.scanner-page {
   display: none;
 }
 
+#swagger-ui.oauth-hide-global-errors .errors-wrapper {
+  display: none;
+}
+
 @media (max-width: 1199.98px) {
   .setup-panel {
     position: static;

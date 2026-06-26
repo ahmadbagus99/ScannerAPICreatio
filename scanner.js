@@ -126,6 +126,133 @@ async function loadStoredResult(slug, item) {
   }
 }
 
+function basicCredentials(authPayload) {
+  const auth = authPayload?.creatioBasicAuth;
+  const value = auth?.value;
+  if (value?.username || value?.password) {
+    return {
+      username: value.username || "",
+      password: value.password || ""
+    };
+  }
+  if (auth?.username || auth?.password) {
+    return {
+      username: auth.username || "",
+      password: auth.password || ""
+    };
+  }
+  if (typeof value === "string" && value.toLowerCase().startsWith("basic ")) {
+    try {
+      const decoded = atob(value.slice(6).trim());
+      const separator = decoded.indexOf(":");
+      if (separator >= 0) {
+        return {
+          username: decoded.slice(0, separator),
+          password: decoded.slice(separator + 1)
+        };
+      }
+    } catch {
+      return { username: "", password: "" };
+    }
+  }
+  return { username: "", password: "" };
+}
+
+function clearSwaggerAuthError() {
+  document
+    .querySelectorAll("#swagger-ui .bpmcsrf-auth-error")
+    .forEach((element) => element.remove());
+}
+
+function showSwaggerAuthError(message) {
+  clearSwaggerAuthError();
+  const modal =
+    document.querySelector("#swagger-ui .dialog-ux .modal-ux-content") ||
+    document.querySelector("#swagger-ui .modal-ux-content") ||
+    document.querySelector("#swagger-ui .auth-container") ||
+    document.querySelector("#swagger-ui");
+  if (!modal) return;
+
+  const error = document.createElement("div");
+  error.className = "bpmcsrf-auth-error";
+  error.setAttribute("role", "alert");
+  error.style.cssText = [
+    "margin: 12px 0",
+    "padding: 10px 12px",
+    "border: 1px solid #f1aeb5",
+    "border-radius: 4px",
+    "background: #f8d7da",
+    "color: #842029",
+    "font-size: 14px",
+    "line-height: 1.4"
+  ].join(";");
+  error.textContent = message;
+
+  const buttonRow =
+    modal.querySelector(".auth-btn-wrapper") ||
+    modal.querySelector(".modal-btn") ||
+    modal.querySelector("button.authorize")?.parentElement;
+  if (buttonRow) {
+    buttonRow.before(error);
+  } else {
+    modal.append(error);
+  }
+}
+
+function bpmcsrfAuthValidatorPlugin(authenticationMode) {
+  return {
+    statePlugins: {
+      auth: {
+        wrapActions: {
+          authorize: (original) => async (payload) => {
+            if (
+              authenticationMode !== "bpmcsrf" ||
+              !payload?.creatioBasicAuth ||
+              !activeSlug
+            ) {
+              return original(payload);
+            }
+
+            const credentials = basicCredentials(payload);
+            if (!credentials.username || !credentials.password) {
+              const message = "Username and password are required.";
+              setStatus(message, true);
+              showSwaggerAuthError(message);
+              throw new Error(message);
+            }
+
+            const body = new URLSearchParams({
+              username: credentials.username,
+              password: credentials.password
+            });
+            const response = await fetch(
+              `/api/bpmcsrf/token/${encodeURIComponent(activeSlug)}`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded"
+                },
+                body
+              }
+            );
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              const message = result.error || "Creatio username or password is invalid.";
+              setStatus(message, true);
+              showSwaggerAuthError(message);
+              throw new Error(message);
+            }
+
+            clearSwaggerAuthError();
+            setStatus("BPMCSRF authentication successful.");
+            return original(payload);
+          }
+        }
+      }
+    }
+  };
+}
+
 async function loadInstances() {
   try {
     const response = await fetch("/api/instances", { cache: "no-store" });
@@ -188,9 +315,17 @@ async function loadSwagger() {
     const oauthProxyUrl = activeSlug
       ? `${window.location.origin}/api/oauth/token/${encodeURIComponent(activeSlug)}`
       : "";
+    const oauthApiProxyUrl = activeSlug
+      ? `${window.location.origin}/api/oauth/proxy/${encodeURIComponent(activeSlug)}`
+      : "";
     const bpmcsrfProxyPrefix = activeSlug
       ? `${window.location.origin}/api/bpmcsrf/proxy/${encodeURIComponent(activeSlug)}`
       : "";
+    const swaggerElement = document.querySelector("#swagger-ui");
+    swaggerElement.classList.toggle(
+      "oauth-hide-global-errors",
+      authenticationMode === "oauth"
+    );
     SwaggerUIBundle({
       spec,
       dom_id: "#swagger-ui",
@@ -199,10 +334,31 @@ async function loadSwagger() {
       displayRequestDuration: true,
       defaultModelsExpandDepth: -1,
       tryItOutEnabled: true,
+      plugins: [bpmcsrfAuthValidatorPlugin(authenticationMode)],
       requestInterceptor: (request) => {
         if (configuredTokenUrl && request.url === configuredTokenUrl && oauthProxyUrl) {
           request.url = oauthProxyUrl;
           return request;
+        }
+        if (
+          authenticationMode === "oauth" &&
+          creatioServerUrl &&
+          oauthApiProxyUrl
+        ) {
+          const target = new URL(request.url, window.location.href);
+          const server = new URL(creatioServerUrl, window.location.href);
+          const serverPath = server.pathname.replace(/\/+$/, "");
+          const matchesServer =
+            target.origin === server.origin &&
+            (
+              target.pathname === serverPath ||
+              target.pathname.startsWith(`${serverPath}/`) ||
+              (!serverPath && target.pathname.startsWith("/"))
+            );
+          if (matchesServer) {
+            request.url = `${oauthApiProxyUrl}?url=${encodeURIComponent(target.href)}`;
+            return request;
+          }
         }
         if (
           authenticationMode === "bpmcsrf" &&
